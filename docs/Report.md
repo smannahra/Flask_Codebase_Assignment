@@ -231,4 +231,4 @@ The answer was correct but broad. It didn't particularly help as a debugging too
 
 **Case 2 — Wrong But Instructive:**
 
-I could not particularly see a case where Claude did something wrong during this session.
+I could not particularly see a case where Claude did something wrong during this session.!
