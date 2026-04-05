@@ -1,0 +1,943 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Flask Module Dependency Graph</title>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #0f1117;
+      color: #e2e8f0;
+      font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+      overflow: hidden;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── Header ─────────────────────────────────────────────── */
+    #header {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 20px;
+      background: #161b27;
+      border-bottom: 1px solid #2d3748;
+      z-index: 10;
+    }
+
+    #header h1 {
+      font-size: 15px;
+      font-weight: 600;
+      color: #f8f8f2;
+      letter-spacing: 0.5px;
+    }
+
+    #header h1 span { color: #ff5f57; }
+
+    #stats {
+      display: flex;
+      gap: 18px;
+      font-size: 11px;
+      color: #718096;
+    }
+
+    #stats strong { color: #a0aec0; }
+
+    #controls-hint {
+      font-size: 10px;
+      color: #4a5568;
+      text-align: right;
+    }
+
+    /* ── Main layout ─────────────────────────────────────────── */
+    #main {
+      flex: 1 1 auto;
+      display: flex;
+      overflow: hidden;
+    }
+
+    #canvas-container {
+      flex: 1 1 auto;
+      position: relative;
+      overflow: hidden;
+    }
+
+    svg#graph {
+      width: 100%;
+      height: 100%;
+      cursor: grab;
+    }
+
+    svg#graph:active { cursor: grabbing; }
+
+    /* ── Sidebar ─────────────────────────────────────────────── */
+    #sidebar {
+      flex: 0 0 230px;
+      background: #161b27;
+      border-left: 1px solid #2d3748;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .sidebar-section {
+      padding: 14px 16px;
+      border-bottom: 1px solid #2d3748;
+    }
+
+    .sidebar-section h3 {
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: #4a5568;
+      margin-bottom: 10px;
+    }
+
+    /* ── Search ──────────────────────────────────────────────── */
+    #search-box {
+      width: 100%;
+      background: #0f1117;
+      border: 1px solid #2d3748;
+      border-radius: 5px;
+      padding: 6px 10px;
+      color: #e2e8f0;
+      font-size: 12px;
+      font-family: inherit;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    #search-box:focus { border-color: #4299e1; }
+    #search-box::placeholder { color: #4a5568; }
+
+    /* ── Legend ──────────────────────────────────────────────── */
+    #legend-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      padding: 3px 4px;
+      border-radius: 4px;
+      transition: background 0.15s;
+    }
+
+    .legend-item:hover { background: #1e2535; }
+    .legend-item.dimmed { opacity: 0.35; }
+
+    .legend-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .legend-label {
+      font-size: 11px;
+      color: #a0aec0;
+      flex: 1;
+    }
+
+    .legend-count {
+      font-size: 10px;
+      color: #4a5568;
+    }
+
+    /* ── Info panel ──────────────────────────────────────────── */
+    #info-panel {
+      flex: 1 1 auto;
+      overflow-y: auto;
+      padding: 14px 16px;
+    }
+
+    #info-panel h3 {
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: #4a5568;
+      margin-bottom: 10px;
+    }
+
+    #info-content {
+      font-size: 11px;
+      color: #718096;
+      line-height: 1.6;
+    }
+
+    #info-content .module-name {
+      font-size: 13px;
+      font-weight: 700;
+      color: #f8f8f2;
+      margin-bottom: 6px;
+      word-break: break-all;
+    }
+
+    #info-content .module-role {
+      color: #a0aec0;
+      margin-bottom: 10px;
+      line-height: 1.5;
+    }
+
+    #info-content .info-subhead {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: #4a5568;
+      margin: 8px 0 4px;
+    }
+
+    #info-content .dep-list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    #info-content .dep-list li {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      color: #718096;
+      font-size: 10px;
+    }
+
+    #info-content .dep-list li span.arrow { color: #4a5568; }
+
+    #info-content .dep-pill {
+      display: inline-block;
+      padding: 1px 6px;
+      border-radius: 3px;
+      font-size: 10px;
+      background: #1e2535;
+      color: #a0aec0;
+      border: 1px solid #2d3748;
+    }
+
+    #info-default {
+      color: #4a5568;
+      font-size: 11px;
+      line-height: 1.5;
+    }
+
+    /* ── Tooltip ─────────────────────────────────────────────── */
+    #tooltip {
+      position: fixed;
+      pointer-events: none;
+      background: #1e2535;
+      border: 1px solid #2d3748;
+      border-radius: 6px;
+      padding: 10px 13px;
+      font-size: 11px;
+      max-width: 280px;
+      z-index: 100;
+      display: none;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+    }
+
+    #tooltip .tt-name {
+      font-size: 12px;
+      font-weight: 700;
+      color: #f8f8f2;
+      margin-bottom: 5px;
+    }
+
+    #tooltip .tt-role {
+      color: #a0aec0;
+      line-height: 1.5;
+      margin-bottom: 6px;
+    }
+
+    #tooltip .tt-meta {
+      font-size: 10px;
+      color: #4a5568;
+    }
+
+    /* ── SVG elements ────────────────────────────────────────── */
+    .link {
+      fill: none;
+      stroke-width: 1.2;
+      opacity: 0.55;
+      transition: opacity 0.25s, stroke-width 0.25s;
+    }
+
+    .link.dimmed { opacity: 0.05; }
+    .link.highlighted { opacity: 0.9; stroke-width: 2; }
+
+    .node circle {
+      stroke-width: 1.5;
+      cursor: pointer;
+      transition: opacity 0.25s;
+    }
+
+    .node.dimmed circle { opacity: 0.1; }
+    .node.dimmed text { opacity: 0.1; }
+    .node.highlighted circle { stroke-width: 3; filter: drop-shadow(0 0 6px currentColor); }
+    .node.selected circle { stroke-width: 3; }
+
+    .node text {
+      font-size: 9.5px;
+      fill: #a0aec0;
+      pointer-events: none;
+      user-select: none;
+      transition: opacity 0.25s;
+    }
+
+    .node.highlighted text { fill: #f8f8f2; }
+    .node.selected text { fill: #f8f8f2; font-weight: 700; }
+
+    /* scrollbar */
+    #info-panel::-webkit-scrollbar { width: 4px; }
+    #info-panel::-webkit-scrollbar-track { background: transparent; }
+    #info-panel::-webkit-scrollbar-thumb { background: #2d3748; border-radius: 2px; }
+  </style>
+</head>
+<body>
+
+<!-- ── Header ───────────────────────────────────────────────── -->
+<div id="header">
+  <h1><span>Flask</span> Module Dependency Graph</h1>
+  <div id="stats">
+    <div><strong id="stat-nodes">–</strong> modules</div>
+    <div><strong id="stat-edges">–</strong> import edges</div>
+    <div><strong id="stat-groups">–</strong> groups</div>
+  </div>
+  <div id="controls-hint">
+    Scroll to zoom · Drag to pan · Click node to inspect · Dbl-click to reset
+  </div>
+</div>
+
+<!-- ── Main ─────────────────────────────────────────────────── -->
+<div id="main">
+  <div id="canvas-container">
+    <svg id="graph"></svg>
+  </div>
+
+  <!-- Sidebar -->
+  <div id="sidebar">
+    <div class="sidebar-section">
+      <h3>Search</h3>
+      <input id="search-box" type="text" placeholder="module name…" autocomplete="off" />
+    </div>
+
+    <div class="sidebar-section">
+      <h3>Groups</h3>
+      <div id="legend-list"></div>
+    </div>
+
+    <div id="info-panel">
+      <h3>Module Info</h3>
+      <div id="info-content">
+        <div id="info-default">Click any node to inspect its imports and dependents.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Tooltip ──────────────────────────────────────────────── -->
+<div id="tooltip">
+  <div class="tt-name" id="tt-name"></div>
+  <div class="tt-role" id="tt-role"></div>
+  <div class="tt-meta" id="tt-meta"></div>
+</div>
+
+<script>
+// ── Data ─────────────────────────────────────────────────────────────────────
+
+const GROUP_CONFIG = {
+  core:       { color: '#ef4444', label: 'Core',             desc: 'Flask app & public API' },
+  context:    { color: '#3b82f6', label: 'Context',          desc: 'Request context & proxies' },
+  blueprints: { color: '#a855f7', label: 'Blueprints',       desc: 'Modular routing' },
+  utils:      { color: '#f59e0b', label: 'Utilities',        desc: 'CLI, config, helpers, typing' },
+  templating: { color: '#10b981', label: 'Templating',       desc: 'Jinja2 environment & views' },
+  signals:    { color: '#f97316', label: 'Signals',          desc: 'Blinker lifecycle events' },
+  request:    { color: '#06b6d4', label: 'Request / Response', desc: 'Wrappers, sessions, testing' },
+  json:       { color: '#eab308', label: 'JSON',             desc: 'Serialization & providers' },
+  sansio:     { color: '#8b5cf6', label: 'Sans I/O',         desc: 'Protocol-level base classes' },
+};
+
+const RAW_NODES = [
+  // core
+  { id: 'flask.__init__',        label: '__init__',       group: 'core',
+    role: 'Package entry point — re-exports every public symbol that makes up Flask\'s API surface.' },
+  { id: 'flask.app',             label: 'app',            group: 'core',
+    role: 'Flask WSGI application class — wsgi_app(), full_dispatch_request(), error handling, and the complete request lifecycle.' },
+
+  // context
+  { id: 'flask.ctx',             label: 'ctx',            group: 'context',
+    role: 'Unified AppContext holding app, request, session, and g. Pushed/popped around every request via contextvars.' },
+  { id: 'flask.globals',         label: 'globals',        group: 'context',
+    role: 'Context-local proxies: current_app, request, session, g — thread- and async-safe via contextvars + LocalProxy.' },
+
+  // blueprints
+  { id: 'flask.blueprints',      label: 'blueprints',     group: 'blueprints',
+    role: 'Blueprint class for defining reusable, modular groups of routes and handlers that register onto an app.' },
+
+  // utils
+  { id: 'flask.helpers',         label: 'helpers',        group: 'utils',
+    role: 'Utility functions: url_for(), make_response(), send_file(), send_from_directory(), flash(), get_flashed_messages().' },
+  { id: 'flask.cli',             label: 'cli',            group: 'utils',
+    role: 'Click-based CLI — flask run, flask shell, and @app.cli.command() registration. Auto-detects the app factory.' },
+  { id: 'flask.config',          label: 'config',         group: 'utils',
+    role: 'Dict-like Config with from_object(), from_file(), from_envvar(), and from_prefixed_env() loading strategies.' },
+  { id: 'flask.logging',         label: 'logging',        group: 'utils',
+    role: 'Logging setup: creates the default stream handler and routes log_exception() calls to app.logger.' },
+  { id: 'flask.typing',          label: 'typing',         group: 'utils',
+    role: 'Internal type aliases and callable type definitions used in Flask\'s own annotations (not part of public API).' },
+  { id: 'flask.debughelpers',    label: 'debughelpers',   group: 'utils',
+    role: 'Debug-mode diagnostics: blueprint-attachment error explanations and URL rule matching guidance.' },
+
+  // templating
+  { id: 'flask.templating',      label: 'templating',     group: 'templating',
+    role: 'Jinja2 environment creation, render_template(), render_template_string(), and streaming variants.' },
+  { id: 'flask.views',           label: 'views',          group: 'templating',
+    role: 'Class-based view support: View base class and MethodView for HTTP-method dispatch.' },
+
+  // signals
+  { id: 'flask.signals',         label: 'signals',        group: 'signals',
+    role: 'Blinker signal definitions: request_started, request_finished, template_rendered, appcontext_pushed/popped, message_flashed, etc.' },
+
+  // request / response
+  { id: 'flask.sessions',        label: 'sessions',       group: 'request',
+    role: 'SessionInterface abstraction and SecureCookieSessionInterface — signs session data into a cookie via itsdangerous.' },
+  { id: 'flask.wrappers',        label: 'wrappers',       group: 'request',
+    role: 'Request and Response subclasses extending Werkzeug with Flask-specific JSON handling and routing attributes.' },
+  { id: 'flask.testing',         label: 'testing',        group: 'request',
+    role: 'FlaskClient test client with context preservation, and EnvironBuilder helpers for writing request tests.' },
+
+  // json
+  { id: 'flask.json',            label: 'json',           group: 'json',
+    role: 'JSON API — dumps()/loads() wrappers that delegate to the app\'s configured JSONProvider.' },
+  { id: 'flask.json.provider',   label: 'json.provider',  group: 'json',
+    role: 'JSONProvider abstraction and DefaultJSONProvider with support for datetime, UUID, decimal, and dataclasses.' },
+  { id: 'flask.json.tag',        label: 'json.tag',       group: 'json',
+    role: 'Tagged JSON serialization used by SecureCookieSessionInterface to round-trip Python types through JSON.' },
+
+  // sansio
+  { id: 'flask.sansio.app',      label: 'sansio.app',     group: 'sansio',
+    role: 'Protocol-level App base — routing map, error handler registry, before/after request hooks, no WSGI I/O.' },
+  { id: 'flask.sansio.blueprints', label: 'sansio.blueprints', group: 'sansio',
+    role: 'Protocol-level Blueprint — deferred route/handler registration via BlueprintSetupState, no WSGI I/O.' },
+  { id: 'flask.sansio.scaffold',  label: 'sansio.scaffold', group: 'sansio',
+    role: 'Scaffold base shared by App and Blueprint — @route, @errorhandler, @before_request, template folder config.' },
+];
+
+// Edges: source imports from target
+const RAW_LINKS = [
+  // __init__ pulls in the public API
+  ['flask.__init__',        'flask.json'],
+  ['flask.__init__',        'flask.app'],
+  ['flask.__init__',        'flask.blueprints'],
+  ['flask.__init__',        'flask.config'],
+  ['flask.__init__',        'flask.ctx'],
+  ['flask.__init__',        'flask.globals'],
+  ['flask.__init__',        'flask.helpers'],
+  ['flask.__init__',        'flask.signals'],
+  ['flask.__init__',        'flask.templating'],
+  ['flask.__init__',        'flask.wrappers'],
+
+  // app.py
+  ['flask.app',             'flask.cli'],
+  ['flask.app',             'flask.typing'],
+  ['flask.app',             'flask.ctx'],
+  ['flask.app',             'flask.globals'],
+  ['flask.app',             'flask.helpers'],
+  ['flask.app',             'flask.sansio.app'],
+  ['flask.app',             'flask.sessions'],
+  ['flask.app',             'flask.signals'],
+  ['flask.app',             'flask.templating'],
+  ['flask.app',             'flask.wrappers'],
+
+  // blueprints.py
+  ['flask.blueprints',      'flask.cli'],
+  ['flask.blueprints',      'flask.globals'],
+  ['flask.blueprints',      'flask.helpers'],
+  ['flask.blueprints',      'flask.sansio.blueprints'],
+  ['flask.blueprints',      'flask.sansio.scaffold'],
+
+  // cli.py
+  ['flask.cli',             'flask.globals'],
+  ['flask.cli',             'flask.helpers'],
+
+  // ctx.py
+  ['flask.ctx',             'flask.typing'],
+  ['flask.ctx',             'flask.globals'],
+  ['flask.ctx',             'flask.helpers'],
+  ['flask.ctx',             'flask.signals'],
+
+  // helpers.py
+  ['flask.helpers',         'flask.globals'],
+  ['flask.helpers',         'flask.signals'],
+
+  // logging.py
+  ['flask.logging',         'flask.globals'],
+
+  // templating.py
+  ['flask.templating',      'flask.ctx'],
+  ['flask.templating',      'flask.globals'],
+  ['flask.templating',      'flask.helpers'],
+  ['flask.templating',      'flask.signals'],
+
+  // testing.py
+  ['flask.testing',         'flask.cli'],
+  ['flask.testing',         'flask.sessions'],
+
+  // views.py
+  ['flask.views',           'flask.typing'],
+  ['flask.views',           'flask.globals'],
+
+  // wrappers.py
+  ['flask.wrappers',        'flask.json'],
+  ['flask.wrappers',        'flask.globals'],
+  ['flask.wrappers',        'flask.helpers'],
+
+  // debughelpers.py
+  ['flask.debughelpers',    'flask.blueprints'],
+  ['flask.debughelpers',    'flask.globals'],
+  ['flask.debughelpers',    'flask.sansio.app'],
+
+  // json/__init__.py
+  ['flask.json',            'flask.globals'],
+  ['flask.json',            'flask.json.provider'],
+
+  // json/tag.py
+  ['flask.json.tag',        'flask.json'],
+
+  // sansio/scaffold.py
+  ['flask.sansio.scaffold', 'flask.typing'],
+  ['flask.sansio.scaffold', 'flask.helpers'],
+  ['flask.sansio.scaffold', 'flask.templating'],
+
+  // sansio/app.py
+  ['flask.sansio.app',      'flask.typing'],
+  ['flask.sansio.app',      'flask.config'],
+  ['flask.sansio.app',      'flask.ctx'],
+  ['flask.sansio.app',      'flask.helpers'],
+  ['flask.sansio.app',      'flask.json.provider'],
+  ['flask.sansio.app',      'flask.logging'],
+  ['flask.sansio.app',      'flask.templating'],
+  ['flask.sansio.app',      'flask.sansio.scaffold'],
+
+  // sansio/blueprints.py
+  ['flask.sansio.blueprints', 'flask.typing'],
+  ['flask.sansio.blueprints', 'flask.sansio.scaffold'],
+];
+
+// ── Pre-process data ──────────────────────────────────────────────────────────
+
+// Compute in-degree and out-degree per node
+const inDegree  = {};
+const outDegree = {};
+RAW_NODES.forEach(n => { inDegree[n.id] = 0; outDegree[n.id] = 0; });
+RAW_LINKS.forEach(([s, t]) => { outDegree[s]++; inDegree[t]++; });
+
+const nodeById = {};
+const nodes = RAW_NODES.map(n => {
+  const node = { ...n, inDegree: inDegree[n.id], outDegree: outDegree[n.id] };
+  nodeById[n.id] = node;
+  return node;
+});
+
+const links = RAW_LINKS.map(([s, t]) => ({ source: s, target: t }));
+
+// Adjacency for info panel
+const imports   = {}; // node → list of nodes it imports
+const importedBy = {}; // node → list of nodes that import it
+nodes.forEach(n => { imports[n.id] = []; importedBy[n.id] = []; });
+RAW_LINKS.forEach(([s, t]) => { imports[s].push(t); importedBy[t].push(s); });
+
+// Group counts for legend
+const groupCounts = {};
+nodes.forEach(n => { groupCounts[n.group] = (groupCounts[n.group] || 0) + 1; });
+
+// Update header stats
+document.getElementById('stat-nodes').textContent  = nodes.length;
+document.getElementById('stat-edges').textContent  = links.length;
+document.getElementById('stat-groups').textContent = Object.keys(GROUP_CONFIG).length;
+
+// ── Legend ────────────────────────────────────────────────────────────────────
+
+const legendList = document.getElementById('legend-list');
+const activeGroups = new Set(Object.keys(GROUP_CONFIG));
+
+Object.entries(GROUP_CONFIG).forEach(([key, cfg]) => {
+  const item = document.createElement('div');
+  item.className = 'legend-item';
+  item.dataset.group = key;
+  item.innerHTML = `
+    <div class="legend-dot" style="background:${cfg.color}"></div>
+    <div class="legend-label">${cfg.label}</div>
+    <div class="legend-count">${groupCounts[key] || 0}</div>
+  `;
+  item.title = cfg.desc;
+  item.addEventListener('click', () => toggleGroup(key, item));
+  legendList.appendChild(item);
+});
+
+function toggleGroup(group, item) {
+  if (activeGroups.has(group)) {
+    activeGroups.delete(group);
+    item.classList.add('dimmed');
+  } else {
+    activeGroups.add(group);
+    item.classList.remove('dimmed');
+  }
+  applyGroupFilter();
+}
+
+function applyGroupFilter() {
+  nodeGroup.selectAll('.node').classed('dimmed', d => !activeGroups.has(d.group));
+  linkGroup.selectAll('.link').classed('dimmed', d => {
+    const sn = typeof d.source === 'object' ? d.source : nodeById[d.source];
+    const tn = typeof d.target === 'object' ? d.target : nodeById[d.target];
+    return !activeGroups.has(sn.group) || !activeGroups.has(tn.group);
+  });
+}
+
+// ── SVG setup ────────────────────────────────────────────────────────────────
+
+const svg = d3.select('#graph');
+const container = document.getElementById('canvas-container');
+
+function getDims() {
+  const r = container.getBoundingClientRect();
+  return { width: r.width, height: r.height };
+}
+
+let { width, height } = getDims();
+
+const root = svg.append('g').attr('class', 'root');
+
+// Arrow marker per group (so color matches edge)
+const defs = svg.append('defs');
+
+function markerId(group) { return `arrow-${group}`; }
+
+Object.entries(GROUP_CONFIG).forEach(([key, cfg]) => {
+  defs.append('marker')
+    .attr('id', markerId(key))
+    .attr('viewBox', '0 -4 10 8')
+    .attr('refX', 10)
+    .attr('refY', 0)
+    .attr('markerWidth', 6)
+    .attr('markerHeight', 6)
+    .attr('orient', 'auto')
+    .append('path')
+      .attr('d', 'M0,-4L10,0L0,4')
+      .attr('fill', cfg.color)
+      .attr('opacity', 0.75);
+});
+
+// Also a highlighted marker (white)
+defs.append('marker')
+  .attr('id', 'arrow-highlighted')
+  .attr('viewBox', '0 -4 10 8')
+  .attr('refX', 10)
+  .attr('refY', 0)
+  .attr('markerWidth', 6)
+  .attr('markerHeight', 6)
+  .attr('orient', 'auto')
+  .append('path')
+    .attr('d', 'M0,-4L10,0L0,4')
+    .attr('fill', '#f8f8f2')
+    .attr('opacity', 0.9);
+
+// Zoom
+const zoom = d3.zoom()
+  .scaleExtent([0.15, 4])
+  .on('zoom', e => root.attr('transform', e.transform));
+
+svg.call(zoom);
+svg.on('dblclick.zoom', null); // prevent double-click zoom; we'll use it for reset
+
+// Node radius by in-degree
+function nodeRadius(d) {
+  return 10 + d.inDegree * 2.5;
+}
+
+// ── Force simulation ──────────────────────────────────────────────────────────
+
+const simulation = d3.forceSimulation(nodes)
+  .force('link', d3.forceLink(links)
+    .id(d => d.id)
+    .distance(d => {
+      // longer distance for cross-group links
+      const sg = typeof d.source === 'object' ? d.source.group : '';
+      const tg = typeof d.target === 'object' ? d.target.group : '';
+      return sg === tg ? 90 : 140;
+    })
+    .strength(0.4))
+  .force('charge', d3.forceManyBody().strength(-420))
+  .force('collision', d3.forceCollide().radius(d => nodeRadius(d) + 18).strength(0.9))
+  .force('center', d3.forceCenter(0, 0))
+  .force('x', d3.forceX(0).strength(0.04))
+  .force('y', d3.forceY(0).strength(0.04))
+  .alphaDecay(0.025);
+
+// ── Draw elements ─────────────────────────────────────────────────────────────
+
+const linkGroup = root.append('g').attr('class', 'links');
+const nodeGroup = root.append('g').attr('class', 'nodes');
+
+// Links
+const linkEls = linkGroup.selectAll('.link')
+  .data(links)
+  .join('path')
+    .attr('class', 'link')
+    .attr('stroke', d => {
+      const sn = typeof d.source === 'object' ? d.source : nodeById[d.source];
+      return GROUP_CONFIG[sn.group].color;
+    })
+    .attr('marker-end', d => {
+      const sn = typeof d.source === 'object' ? d.source : nodeById[d.source];
+      return `url(#${markerId(sn.group)})`;
+    });
+
+// Nodes
+const nodeEls = nodeGroup.selectAll('.node')
+  .data(nodes)
+  .join('g')
+    .attr('class', 'node')
+    .call(d3.drag()
+      .on('start', dragStart)
+      .on('drag',  dragged)
+      .on('end',   dragEnd))
+    .on('mouseenter', onNodeEnter)
+    .on('mousemove',  onNodeMove)
+    .on('mouseleave', onNodeLeave)
+    .on('click',      onNodeClick)
+    .on('dblclick',   onDblClick);
+
+nodeEls.append('circle')
+  .attr('r', nodeRadius)
+  .attr('fill', d => GROUP_CONFIG[d.group].color + '22')
+  .attr('stroke', d => GROUP_CONFIG[d.group].color);
+
+nodeEls.append('text')
+  .attr('dy', d => nodeRadius(d) + 12)
+  .attr('text-anchor', 'middle')
+  .text(d => d.label);
+
+// ── Tick ─────────────────────────────────────────────────────────────────────
+
+simulation.on('tick', () => {
+  linkEls.attr('d', linkPath);
+
+  nodeEls.attr('transform', d => `translate(${d.x},${d.y})`);
+});
+
+function linkPath(d) {
+  const sx = d.source.x, sy = d.source.y;
+  const tx = d.target.x, ty = d.target.y;
+  const dx = tx - sx, dy = ty - sy;
+  const dist = Math.hypot(dx, dy) || 1;
+  const tr = nodeRadius(d.target) + 9; // offset past node border + arrowhead
+  const ratio = Math.max(0, (dist - tr) / dist);
+  const ex = sx + dx * ratio;
+  const ey = sy + dy * ratio;
+  // Slight quadratic curve (perpendicular offset = 18% of length)
+  const bend = dist * 0.14;
+  const mx = (sx + tx) / 2 + (-dy / dist) * bend;
+  const my = (sy + ty) / 2 + ( dx / dist) * bend;
+  return `M${sx},${sy} Q${mx},${my} ${ex},${ey}`;
+}
+
+// ── Drag ─────────────────────────────────────────────────────────────────────
+
+function dragStart(event, d) {
+  if (!event.active) simulation.alphaTarget(0.3).restart();
+  d.fx = d.x; d.fy = d.y;
+}
+function dragged(event, d) { d.fx = event.x; d.fy = event.y; }
+function dragEnd(event, d) {
+  if (!event.active) simulation.alphaTarget(0);
+  d.fx = null; d.fy = null;
+}
+
+// ── Tooltip ───────────────────────────────────────────────────────────────────
+
+const tooltip = document.getElementById('tooltip');
+
+function onNodeEnter(event, d) {
+  document.getElementById('tt-name').textContent = d.id;
+  document.getElementById('tt-role').textContent = d.role;
+  document.getElementById('tt-meta').textContent =
+    `↑ ${d.outDegree} import${d.outDegree !== 1 ? 's' : ''}  ·  ↓ imported by ${d.inDegree}`;
+  tooltip.style.display = 'block';
+  positionTooltip(event);
+}
+
+function onNodeMove(event) { positionTooltip(event); }
+
+function onNodeLeave() { tooltip.style.display = 'none'; }
+
+function positionTooltip(event) {
+  const tw = tooltip.offsetWidth, th = tooltip.offsetHeight;
+  const vw = window.innerWidth,  vh = window.innerHeight;
+  let x = event.clientX + 14, y = event.clientY + 14;
+  if (x + tw > vw - 10) x = event.clientX - tw - 14;
+  if (y + th > vh - 10) y = event.clientY - th - 14;
+  tooltip.style.left = x + 'px';
+  tooltip.style.top  = y + 'px';
+}
+
+// ── Click / highlight ─────────────────────────────────────────────────────────
+
+let selectedNode = null;
+
+function onNodeClick(event, d) {
+  event.stopPropagation();
+  tooltip.style.display = 'none';
+
+  if (selectedNode === d.id) {
+    resetHighlight();
+    return;
+  }
+
+  selectedNode = d.id;
+  const connectedNodes = new Set([d.id]);
+  const connectedLinks = new Set();
+
+  links.forEach((lk, i) => {
+    const sid = typeof lk.source === 'object' ? lk.source.id : lk.source;
+    const tid = typeof lk.target === 'object' ? lk.target.id : lk.target;
+    if (sid === d.id || tid === d.id) {
+      connectedNodes.add(sid);
+      connectedNodes.add(tid);
+      connectedLinks.add(i);
+    }
+  });
+
+  nodeEls
+    .classed('dimmed',      n => !connectedNodes.has(n.id))
+    .classed('highlighted', n => connectedNodes.has(n.id) && n.id !== d.id)
+    .classed('selected',    n => n.id === d.id);
+
+  linkEls
+    .classed('dimmed',      (_, i) => !connectedLinks.has(i))
+    .classed('highlighted', (_, i) =>  connectedLinks.has(i))
+    .attr('marker-end', (lk, i) => {
+      if (!connectedLinks.has(i)) {
+        const sn = typeof lk.source === 'object' ? lk.source : nodeById[lk.source];
+        return `url(#${markerId(sn.group)})`;
+      }
+      return 'url(#arrow-highlighted)';
+    })
+    .attr('stroke', (lk, i) => {
+      if (connectedLinks.has(i)) return '#f8f8f2';
+      const sn = typeof lk.source === 'object' ? lk.source : nodeById[lk.source];
+      return GROUP_CONFIG[sn.group].color;
+    });
+
+  updateInfoPanel(d);
+}
+
+function onDblClick(event, d) {
+  event.stopPropagation();
+  resetHighlight();
+}
+
+svg.on('click', () => resetHighlight());
+
+function resetHighlight() {
+  selectedNode = null;
+  nodeEls.classed('dimmed', false).classed('highlighted', false).classed('selected', false);
+  linkEls
+    .classed('dimmed', false).classed('highlighted', false)
+    .attr('stroke', d => {
+      const sn = typeof d.source === 'object' ? d.source : nodeById[d.source];
+      return GROUP_CONFIG[sn.group].color;
+    })
+    .attr('marker-end', d => {
+      const sn = typeof d.source === 'object' ? d.source : nodeById[d.source];
+      return `url(#${markerId(sn.group)})`;
+    });
+  // Re-apply group filter
+  applyGroupFilter();
+  document.getElementById('info-content').innerHTML =
+    '<div id="info-default">Click any node to inspect its imports and dependents.</div>';
+}
+
+// ── Info panel ────────────────────────────────────────────────────────────────
+
+function updateInfoPanel(d) {
+  const cfg = GROUP_CONFIG[d.group];
+  const imp = imports[d.id].map(id => nodeById[id]);
+  const iby = importedBy[d.id].map(id => nodeById[id]);
+
+  const renderList = (items, arrowChar) => items.length
+    ? items.map(n => `
+        <li>
+          <span class="arrow">${arrowChar}</span>
+          <span class="dep-pill" style="border-color:${GROUP_CONFIG[n.group].color}44;color:${GROUP_CONFIG[n.group].color}">${n.label}</span>
+        </li>`).join('')
+    : '<li style="color:#4a5568;font-style:italic">none</li>';
+
+  document.getElementById('info-content').innerHTML = `
+    <div class="module-name" style="color:${cfg.color}">${d.label}</div>
+    <div class="module-role">${d.role}</div>
+    <div style="font-size:10px;color:${cfg.color};margin-bottom:8px;opacity:0.7">${cfg.label} group · src/flask/${d.label.replace('.', '/')}.py</div>
+
+    <div class="info-subhead">Imports (${imp.length})</div>
+    <ul class="dep-list">${renderList(imp, '→')}</ul>
+
+    <div class="info-subhead">Imported by (${iby.length})</div>
+    <ul class="dep-list">${renderList(iby, '←')}</ul>
+  `;
+}
+
+// ── Search ────────────────────────────────────────────────────────────────────
+
+document.getElementById('search-box').addEventListener('input', function() {
+  const q = this.value.trim().toLowerCase();
+  if (!q) { resetHighlight(); return; }
+
+  nodeEls
+    .classed('dimmed',      d => !d.id.toLowerCase().includes(q) && !d.label.toLowerCase().includes(q))
+    .classed('highlighted', d =>  d.id.toLowerCase().includes(q) ||  d.label.toLowerCase().includes(q))
+    .classed('selected',    false);
+
+  linkEls.classed('dimmed', true).classed('highlighted', false);
+});
+
+// ── Resize ────────────────────────────────────────────────────────────────────
+
+window.addEventListener('resize', () => {
+  const dims = getDims();
+  width  = dims.width;
+  height = dims.height;
+  simulation.force('center', d3.forceCenter(0, 0)).alpha(0.1).restart();
+});
+
+// ── Initial zoom-to-fit after simulation settles ──────────────────────────────
+
+simulation.on('end', () => {
+  const { width: W, height: H } = getDims();
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  nodes.forEach(n => {
+    const r = nodeRadius(n) + 15;
+    minX = Math.min(minX, n.x - r); maxX = Math.max(maxX, n.x + r);
+    minY = Math.min(minY, n.y - r); maxY = Math.max(maxY, n.y + r);
+  });
+  const scale  = Math.min(0.9, 0.9 / Math.max((maxX - minX) / W, (maxY - minY) / H));
+  const tx = W / 2 - scale * (minX + maxX) / 2;
+  const ty = H / 2 - scale * (minY + maxY) / 2;
+  svg.transition().duration(800).call(
+    zoom.transform, d3.zoomIdentity.translate(tx, ty).scale(scale)
+  );
+});
+
+</script>
+</body>
+</html>

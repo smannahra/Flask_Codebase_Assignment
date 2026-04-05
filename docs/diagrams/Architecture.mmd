@@ -1,0 +1,98 @@
+flowchart TD
+    subgraph CLIENT["CLIENT"]
+        Browser["Browser / HTTP Client"]
+    end
+
+    subgraph WSGI["WSGI SERVER LAYER"]
+        WSGIServer["Gunicorn / uWSGI / Waitress<br/>(external process)"]
+    end
+
+    subgraph ENTRY["ENTRY POINT LAYER"]
+        AppCall["Flask.__call__<br/>src/flask/app.py"]
+        CLI["flask CLI<br/>src/flask/cli.py"]
+        Main["python -m flask<br/>src/flask/__main__.py"]
+    end
+
+    subgraph CONTEXT["CONTEXT LAYER"]
+        AppCtx["AppContext<br/>src/flask/ctx.py"]
+        ReqCtx["RequestContext<br/>src/flask/ctx.py"]
+        Globals["Proxies: current_app, request, g,<br/>session<br/>src/flask/globals.py"]
+    end
+
+    subgraph REQUEST["REQUEST / RESPONSE LAYER"]
+        Wrappers["Request & Response wrappers<br/>src/flask/wrappers.py"]
+        Sessions["SecureCookieSession<br/>src/flask/sessions.py"]
+        Config["Config loader<br/>src/flask/config.py"]
+    end
+
+    subgraph ROUTING["ROUTING LAYER"]
+        Scaffold["Route & error handler<br/>registration<br/>src/flask/sansio/scaffold.py"]
+        AppRoute["URL dispatch & full_dispatch_request<br/>src/flask/app.py"]
+        Blueprint["Blueprint registration<br/>src/flask/blueprints.py"]
+        SansioApp["Protocol-agnostic App base<br/>src/flask/sansio/app.py"]
+    end
+
+    subgraph VIEW["VIEW LAYER"]
+        Views["Class-based Views<br/>src/flask/views.py"]
+        Helpers["url_for, redirect, abort, flash<br/>src/flask/helpers.py"]
+        DebugHelpers["Debug error pages<br/>src/flask/debughelpers.py"]
+    end
+
+    subgraph TEMPLATE["TEMPLATE LAYER"]
+        Templating["Jinja2 environment setup<br/>src/flask/templating.py"]
+        Jinja2["Jinja2 engine<br/>(external: jinja2)"]
+    end
+
+    subgraph DATA["DATA & SERIALIZATION LAYER"]
+        JSONProvider["JSONProvider<br/>src/flask/json/provider.py"]
+        JSONTag["Tagged JSON for sessions<br/>src/flask/json/tag.py"]
+        ItsDangerous["Cookie signing<br/>(external: itsdangerous)"]
+    end
+
+    subgraph SIGNALS["CROSS-CUTTING CONCERNS"]
+        SignalsDef["Lifecycle signals<br/>src/flask/signals.py"]
+        Logging["Logger setup<br/>src/flask/logging.py"]
+        Typing["Type annotations<br/>src/flask/typing.py"]
+        Blinker["Signal dispatch<br/>(external: blinker)"]
+    end
+
+    Browser -->|HTTP request| WSGIServer
+    WSGIServer -->|WSGI environ| AppCall
+    Main --> CLI
+    CLI -->|"flask run / shell"| AppCall
+
+    AppCall --> AppCtx
+    AppCall --> ReqCtx
+    AppCtx & ReqCtx --> Globals
+
+    AppCall --> Wrappers
+    Wrappers --> Sessions
+    Sessions --> ItsDangerous
+    AppCall --> Config
+
+    Globals --> AppRoute
+    Wrappers --> AppRoute
+    AppRoute --> Scaffold
+    AppRoute --> Blueprint
+    Scaffold --> SansioApp
+    Blueprint --> SansioApp
+
+    AppRoute --> Views
+    AppRoute --> Helpers
+    AppRoute --> DebugHelpers
+
+    Views --> Templating
+    Helpers --> Templating
+    Templating --> Jinja2
+
+    Views --> JSONProvider
+    JSONProvider --> JSONTag
+
+    AppCall --> SignalsDef
+    SignalsDef --> Blinker
+    AppCall --> Logging
+    Views -.->|type annotations| Typing
+
+    Jinja2 -->|rendered HTML| WSGIServer
+    JSONProvider -->|JSON response| WSGIServer
+    WSGIServer -->|HTTP response| Browser

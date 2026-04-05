@@ -1,0 +1,91 @@
+sequenceDiagram
+      actor Client
+      participant WS as WSGI Server<br/>(Gunicorn/uWSGI)
+      participant Call as Flask.__call__<br/>app.py:1618
+      participant WSGI as Flask.wsgi_app<br/>app.py:1566
+      participant Ctx as AppContext.__init__<br/>ctx.py:300
+      participant Push as AppContext.push<br/>ctx.py:416
+      participant SI as SessionInterface.open_session<br/>sessions.py
+      participant Router as AppContext.match_request<br/>ctx.py:405
+      participant FD as Flask.full_dispatch_request<br/>app.py:992
+      participant Pre as Flask.preprocess_request<br/>app.py:1366
+      participant DR as Flask.dispatch_request<br/>app.py:966
+      participant View as View Function<br/>(user code)
+      participant RT as render_template<br/>templating.py:136
+      participant J2 as Jinja2 Engine<br/>(external)
+      participant Fin as Flask.finalize_request<br/>app.py:1021
+      participant MR as Flask.make_response<br/>app.py:1224
+      participant PR as Flask.process_response<br/>app.py:1394
+      participant Pop as AppContext.pop<br/>ctx.py:446
+
+      Client->>WS: HTTP GET /path
+      WS->>Call: __call__(environ, start_response)
+      Call->>WSGI: wsgi_app(environ, start_response)
+
+      Note over WSGI,Ctx: Build context from WSGI environ
+      WSGI->>Ctx: request_context(environ) → AppContext.from_environ()
+      Ctx->>Ctx: Request(environ) [wrappers.py]
+      Ctx->>Ctx: create_url_adapter(request) [app.py:509]
+
+      Note over WSGI,Router: Push context — session load + URL match
+      WSGI->>Push: ctx.push()
+      Push->>Push: _cv_app.set(self) — make context active [globals.py]
+      Push->>Push: send appcontext_pushed signal [signals.py]
+      Push->>SI: _get_session() → open_session(app, request)
+      SI->>SI: URLSafeTimedSerializer.loads(cookie) [itsdangerous]
+      SI-->>Push: SecureCookieSession
+      Push->>Router: match_request()
+      Router->>Router: url_adapter.match(return_rule=True) [Werkzeug]
+      Router->>Router: store url_rule + view_args on request
+
+      WSGI->>FD: full_dispatch_request(ctx)
+      FD->>FD: send request_started signal [signals.py]
+
+      Note over FD,Pre: Run before_request hooks
+      FD->>Pre: preprocess_request(ctx)
+      Pre->>Pre: run url_value_preprocessors
+      Pre->>Pre: run before_request_funcs (Blueprint → App)
+      Pre-->>FD: None (no early return)
+
+      Note over FD,View: Dispatch to matched view function
+      FD->>DR: dispatch_request(ctx)
+      DR->>DR: resolve view_functions[rule.endpoint]
+      DR->>DR: ensure_sync(view_fn) — wrap async if needed [app.py:1065]
+      DR->>View: view_fn(**view_args)
+
+      Note over View,J2: View renders template
+      View->>RT: render_template("index.html", **ctx)
+      RT->>RT: jinja_env.get_or_select_template() [app.py:469]
+      RT->>RT: send before_render_template signal [signals.py]
+      RT->>RT: update_template_context(ctx, context) [app.py:590]
+      RT->>J2: template.render(context)
+      J2-->>RT: rendered HTML string
+      RT->>RT: send template_rendered signal [signals.py]
+      RT-->>View: HTML string
+      View-->>DR: HTML string
+      DR-->>FD: HTML string
+
+      Note over FD,PR: Finalize — build Response + run after_request hooks
+      FD->>Fin: finalize_request(ctx, rv)
+      Fin->>MR: make_response(rv)
+      MR->>MR: wrap string → Response object [wrappers.py]
+      MR-->>Fin: Response(200, "text/html")
+      Fin->>PR: process_response(ctx, response)
+      PR->>PR: run after_request_funcs (App → Blueprint)
+      PR->>SI: session_interface.save_session(app, session, response)
+      SI->>SI: URLSafeTimedSerializer.dumps(session) [itsdangerous]
+      SI->>SI: set Set-Cookie header on response
+      PR-->>Fin: Response (with cookie)
+      Fin->>Fin: send request_finished signal [signals.py]
+      Fin-->>WSGI: Response object
+
+      Note over WSGI,Pop: Write response bytes + teardown
+      WSGI->>WS: response(environ, start_response) — write bytes
+      WSGI->>Pop: ctx.pop(error=None)
+      Pop->>Pop: do_teardown_request() — run teardown_request_funcs [app.py:1420]
+      Pop->>Pop: request.close() — release resources
+      Pop->>Pop: do_teardown_appcontext() [app.py:1453]
+      Pop->>Pop: _cv_app.reset() — deactivate context [globals.py]
+      Pop->>Pop: send appcontext_popped signal [signals.py]
+
+      WS-->>Client: HTTP 200 OK + HTML body

@@ -1,0 +1,32 @@
+stateDiagram-v2
+    direction TB
+    [*] --> Created: request_context(environ)
+    note right of Created: Request from WSGI environ
+    Created --> Active: AppContext.push()
+
+    state Active {
+        direction TB
+        [*] --> InContext: _cv_app.set(self)
+        InContext --> SessionLoaded: _get_session()
+        SessionLoaded --> URLMatched: match_request()
+        URLMatched --> PreProcessing: full_dispatch_request()
+        PreProcessing --> ViewExecuting: dispatch_request()
+        PreProcessing --> ErrorHandling: exception raised
+        ViewExecuting --> ErrorHandling: exception raised
+        ErrorHandling --> Finalized: handle_user_exception()
+        ViewExecuting --> Finalized: finalize_request()
+        Finalized --> [*]
+    }
+
+    Active --> TearingDown: pop(exc)
+
+    state TearingDown {
+        direction TB
+        [*] --> TeardownRequest: do_teardown_request()
+        TeardownRequest --> ReqClosed: request.close()
+        ReqClosed --> TeardownApp: do_teardown_appcontext()
+        TeardownApp --> [*]
+    }
+
+    TearingDown --> Popped: _cv_app.reset()
+    Popped --> [*]
